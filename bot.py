@@ -4,12 +4,28 @@ import os
 import uuid
 import subprocess
 from db import get_user_settings, update_user_setting, reset_user_settings
+from threading import Thread 
+from flask import Flask 
 
 
 BOT_TOKEN = '7174547352:AAEvSSJpA_51UFLuvh9jJv2f2F-6qmoDbq8'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 CHANNEL_ID = -1002433942287
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive"
+
+def run_http_server():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_http_server)
+    t.start()
+
 
 
 
@@ -276,5 +292,7 @@ def handle_audio(message):
             os.remove(input_path)
         if os.path.exists(output_path):
             os.remove(output_path)
+
+keep_alive()
 
 bot.infinity_polling()
