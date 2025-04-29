@@ -8,7 +8,7 @@ from threading import Thread
 from flask import Flask 
 
 
-BOT_TOKEN = '7174547352:AAEvSSJpA_51UFLuvh9jJv2f2F-6qmoDbq8'
+BOT_TOKEN = '6997279925:AAGw3_-EDMW6uFtKClWFu0l1kAhpr3wimcM'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 CHANNEL_ID = -1002433942287
