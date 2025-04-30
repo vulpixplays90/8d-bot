@@ -8,7 +8,7 @@ from threading import Thread
 from flask import Flask 
 
 
-BOT_TOKEN = '6997279925:AAGw3_-EDMW6uFtKClWFu0l1kAhpr3wimcM'
+BOT_TOKEN = '7821179711:AAFrrnYFIyfBpSNt6knxnTk6lbej-ozloLY'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 CHANNEL_ID = -1002433942287
@@ -272,7 +272,7 @@ def handle_audio(message):
             bot.send_audio(
                 chat_id=message.chat.id,
                 audio=audio_file,
-                caption="Here’s your slowed + reverb + 8D audio!\n\n By @username",
+                caption="Here’s your slowed + reverb + 8D audio!\n\n By @Slowreverb8dTelebot",
                 title=f"{base_name} - Slowed Reverb",
                 thumbnail=thumb_file
             )
