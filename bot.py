@@ -6,12 +6,18 @@ import subprocess
 from db import get_user_settings, update_user_setting, reset_user_settings
 from threading import Thread 
 from flask import Flask 
+from queue import Queue
+from threading import Thread
+from db import get_audio_limit, set_audio_limit
+
 
 
 BOT_TOKEN = '7821179711:AAFrrnYFIyfBpSNt6knxnTk6lbej-ozloLY'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 CHANNEL_ID = -1002433942287
+
+
 
 app = Flask('')
 
@@ -26,6 +32,40 @@ def keep_alive():
     t = Thread(target=run_http_server)
     t.start()
 
+
+
+audio_queue = Queue()
+
+def audio_worker():
+    while True:
+        task = audio_queue.get()
+        if task is None:
+            break  # allows graceful shutdown if needed
+        process_audio_task(*task)
+        audio_queue.task_done()
+
+Thread(target=audio_worker, daemon=True).start()
+
+
+@bot.message_handler(commands=['setlimit'])
+def set_limit(message):
+    if message.from_user.id != ADMIN_ID:
+        return bot.reply_to(message, "❌ You're not allowed to use this.")
+
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            raise ValueError
+
+        limit_value = int(parts[1])
+        if limit_value <= 0:
+            raise ValueError
+
+        set_audio_limit(limit_value * 60)  # convert minutes to seconds
+        bot.reply_to(message, f"✅ Audio time limit set to {limit_value} minutes.")
+
+    except ValueError:
+        bot.reply_to(message, "Usage: /setlimit [minutes]\nExample: /setlimit 8")
 
 
 
@@ -220,78 +260,115 @@ def help_handler(message):
 
 @bot.message_handler(content_types=['audio', 'voice'])
 def handle_audio(message):
-   
+    try:
+        file_info = bot.get_file(message.audio.file_id if message.audio else message.voice.file_id)
+        # Check audio duration
+        duration_seconds = message.audio.duration if message.audio else message.voice.duration
+        if duration_seconds > get_audio_limit():
+            return bot.reply_to(message, f"⚠️ Audio too long! Limit is {get_audio_limit() // 60} minutes.")
+        
+        downloaded_file = bot.download_file(file_info.file_path)
 
-    file_info = bot.get_file(message.audio.file_id if message.audio else message.voice.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+        original_name = message.audio.file_name if message.audio else "voice_message"
+        base_name = os.path.splitext(original_name)[0]
+        unique_id = str(uuid.uuid4())
 
-    original_name = message.audio.file_name if message.audio else "voice_message"
-    base_name = os.path.splitext(original_name)[0]
-    unique_id = str(uuid.uuid4())
+        input_path = f"{unique_id}.mp3"
+        output_path = f"{unique_id}_slowedReverb.mp3"
 
-    input_path = f"{unique_id}.mp3"
-    output_path = f"{unique_id}_slowedReverb.mp3"
+        # Save the downloaded file
+        with open(input_path, 'wb') as f:
+            f.write(downloaded_file)
 
-    # Save the downloaded file
-    with open(input_path, 'wb') as f:
-        f.write(downloaded_file)
-
-    # Send original audio to channel with user info
-    caption = (
-        f"🆕 New audio received\n"
-        f"👤 Username: @{message.from_user.username or 'N/A'}\n"
-        f"🆔 User ID: `{message.from_user.id}`"
-    )
-
-    with open(input_path, 'rb') as audio_file:
-        bot.send_audio(
-            chat_id=CHANNEL_ID,
-            audio=audio_file,
-            caption=caption,
-            parse_mode="Markdown"
+        # Send to channel log
+        caption = (
+            f"🆕 New audio received\n"
+            f"👤 Username: @{message.from_user.username or 'N/A'}\n"
+            f"🆔 User ID: `{message.from_user.id}`"
         )
+        with open(input_path, 'rb') as audio_file:
+            bot.send_audio(
+                chat_id=CHANNEL_ID,
+                audio=audio_file,
+                caption=caption,
+                parse_mode="Markdown"
+            )
 
-    # Progress bar to user
+        # Notify user and store that message to delete later
+        queue_msg = bot.send_message(message.chat.id, "⏳ You're added to the processing queue. Please wait...")
+
+        # Pass queue message ID into the task
+        audio_queue.put((message, input_path, output_path, base_name, queue_msg.message_id))
+
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ Failed to prepare audio:\n`{e}`", parse_mode="Markdown")
+
+
+def process_audio_task(message, input_path, output_path, base_name, queue_msg_id):
+
+    # Remove the "You're in queue" message
+    try:
+        bot.delete_message(message.chat.id, queue_msg_id)
+    except:
+            pass
+    
+    chat_id = message.chat.id
+
+    # Send progress bar message
     progress_msg = bot.send_message(
-        message.chat.id,
+        chat_id,
         "⏳ *Processing your audio...*\n`[▓░░░░░░░░░] 10%`",
         parse_mode="Markdown"
     )
     time.sleep(1)
-    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓░░░░░░░] 30%`", message.chat.id, progress_msg.message_id, parse_mode="Markdown")
+    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓░░░░░░░] 30%`", chat_id, progress_msg.message_id, parse_mode="Markdown")
     time.sleep(1)
-    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓▓▓░░░░░] 60%`", message.chat.id, progress_msg.message_id, parse_mode="Markdown")
+    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓▓▓░░░░░] 60%`", chat_id, progress_msg.message_id, parse_mode="Markdown")
     time.sleep(1)
-    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓▓▓▓▓▓░░] 90%`", message.chat.id, progress_msg.message_id, parse_mode="Markdown")
+    bot.edit_message_text("⏳ *Processing your audio...*\n`[▓▓▓▓▓▓▓▓░░] 90%`\n(Longer Audios May Take Upto 3-5Minutes)", chat_id, progress_msg.message_id, parse_mode="Markdown")
 
-    # Process the audio
     try:
-        subprocess.run(["python3", "main.py", input_path, output_path, str(message.chat.id)], check=True)
+        subprocess.run(["python3", "main.py", input_path, output_path, str(chat_id)], check=True)
 
         with open(output_path, 'rb') as audio_file, open("image.jpg", 'rb') as thumb_file:
             bot.send_audio(
-                chat_id=message.chat.id,
+                chat_id=chat_id,
                 audio=audio_file,
                 caption="Here’s your slowed + reverb + 8D audio!\n\n By @Slowreverb8dTelebot",
                 title=f"{base_name} - Slowed Reverb",
                 thumbnail=thumb_file
             )
 
-        # Delete progress message after success
-        bot.delete_message(message.chat.id, progress_msg.message_id)
+        bot.delete_message(chat_id, progress_msg.message_id)
 
     except subprocess.CalledProcessError as e:
-        bot.edit_message_text(f"⚠️ Error processing audio:\n`{e}`", message.chat.id, progress_msg.message_id, parse_mode="Markdown")
-
+        bot.edit_message_text(f"⚠️ Error processing audio:\n`{e}`", chat_id, progress_msg.message_id, parse_mode="Markdown")
     except Exception as e:
-        bot.edit_message_text(f"⚠️ Unexpected error:\n`{e}`", message.chat.id, progress_msg.message_id, parse_mode="Markdown")
-
+        bot.edit_message_text(f"⚠️ Unexpected error:\n`{e}`", chat_id, progress_msg.message_id, parse_mode="Markdown")
     finally:
-        # Clean up temporary files
         if os.path.exists(input_path):
             os.remove(input_path)
         if os.path.exists(output_path):
             os.remove(output_path)
+
+
+from queue import Queue
+from threading import Thread
+
+audio_queue = Queue()
+
+def audio_worker():
+    while True:
+        task = audio_queue.get()
+        if task is None:
+            break
+        process_audio_task(*task)
+        audio_queue.task_done()
+
+Thread(target=audio_worker, daemon=True).start()
+
+
 
 keep_alive()
 

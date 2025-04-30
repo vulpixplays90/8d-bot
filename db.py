@@ -60,3 +60,17 @@ def register_user(chat_id):
 def get_all_users():
     return [user["chat_id"] for user in user_collection.find()]
 
+
+config_collection = db["Config"]
+
+def get_audio_limit():
+    config = config_collection.find_one({"_id": "limit"})
+    return config["seconds"] if config else 300  # default = 5 min
+
+def set_audio_limit(seconds):
+    config_collection.update_one(
+        {"_id": "limit"},
+        {"$set": {"seconds": seconds}},
+        upsert=True
+    )
+
